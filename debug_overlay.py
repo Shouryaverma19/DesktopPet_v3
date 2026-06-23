@@ -145,7 +145,7 @@ class Color:
             return f"{self.color_class}{str(val)}"
 
 class HitboxOverlay(QtWidgets.QWidget):
-    '''Widget for displaying hitbox overlays'''
+    '''Widget for displaying hitbox overlays (rectangles, polygons, and masks)'''
     def __init__(self):
         super().__init__()
 
@@ -160,6 +160,7 @@ class HitboxOverlay(QtWidgets.QWidget):
 
         # Dane do rysowania
         self.rects: list[tuple[int, int, int, int]] = []
+        self.polygons: list[tuple[list[tuple[float, float]], tuple[int, int, int]]] = []
         self.masks: list[tuple] = []  # Lista krotek: (QImage, x, y)
 
         # Pobranie wirtualnej geometrii (wszystkie monitory)
@@ -178,19 +179,21 @@ class HitboxOverlay(QtWidgets.QWidget):
         self.setGeometry(virtual_geometry)
         self.show()
 
-    def update_hitboxes(self, rects: list = None, masks: list = None):
+    def update_hitboxes(self, rects: list = None, masks: list = None, polygons: list = None):
         """
-        Updates hitbox overlay with rectangles and masks
+        Updates hitbox overlay with rectangles, polygons and masks
 
-        rects: lista krotek ((x,y,w,h), kolor)
+        rects: lista krotek (((x, y, w, h), kolor))
         masks: lista krotek (QImage, x, y)
+        polygons: lista krotek (([(x1, y1), (x2, y2), ...], kolor))
         """
         self.rects = [] if rects is None else rects
         self.masks = [] if masks is None else masks
+        self.polygons = [] if polygons is None else polygons
         self.update()
 
     def paintEvent(self, event):
-        '''Paints hitboxes and masks on the overlay'''
+        '''Paints hitboxes, polygons and masks on the overlay'''
         painter = QtGui.QPainter(self)
         # painter.setRenderHint(QtGui.QPainter.Antialiasing)
 
@@ -217,6 +220,33 @@ class HitboxOverlay(QtWidgets.QWidget):
                 x2 = int(rect[2]) + self.primary_offset_x
                 y2 = int(rect[3]) + self.primary_offset_y
                 painter.drawRect(x1, y1, x2 - x1, y2 - y1)
+
+        # Rysowanie Wielokątów (dokładne hitboxy brył)
+        if self.polygons:
+            painter.setPen(QtGui.QPen(QtCore.Qt.GlobalColor.white, 2))
+            for vertices, (r, g, b) in self.polygons:
+                if len(vertices) < 2:
+                    continue
+
+                # Konwersja do QPoints
+                qpoints = [QtCore.QPointF(x + self.primary_offset_x, y + self.primary_offset_y) for x, y in vertices]
+
+                # Rysowanie obwodu wielokąta
+                color = QtGui.QColor(r, g, b)
+                painter.setPen(QtGui.QPen(color, 2, QtCore.Qt.PenStyle.SolidLine))
+
+                # Rysowanie linii między wierzchołkami (zamknięty wielokąt)
+                for i in range(len(qpoints)):
+                    start = qpoints[i]
+                    end = qpoints[(i + 1) % len(qpoints)]
+                    painter.drawLine(start, end)
+
+                # Rysowanie wierzchołków jako małych kółek
+                painter.setBrush(QtGui.QBrush(color))
+                for point in qpoints:
+                    painter.drawEllipse(point, 3, 3)
+
+        painter.end()
 
 class DebugWindow(QtWidgets.QWidget):
     """

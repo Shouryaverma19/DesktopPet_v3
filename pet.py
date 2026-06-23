@@ -616,7 +616,14 @@ class PetWidget(QtWidgets.QWidget):
             )
 
             # --- Rysowanie hitboxów do debugowania ---
-            rect_objects = list({(obj.debug_expanded_platform_rect.as_tuple, (100, 255, 0, 180)) for obj in self.world_objects})
+            rect_objects: list = list({(obj.debug_expanded_platform_rect.as_tuple, (100, 255, 0, 180)) for obj in self.world_objects})
+            polygons_objects: list[tuple[list[tuple[float | int, float | int]], tuple[int, int, int]]] = []
+            for obj in self.world_objects:
+                local_vertices: list[tuple[float | int, float | int]] = []
+                for vertex in obj.shape.get_vertices():
+                    world_pos = obj.body.local_to_world(vertex)
+                    local_vertices.append((float(world_pos.x), float(world_pos.y)))
+                polygons_objects.append((local_vertices, (255, 200, 200)))
             if self.hitbox_overlay is not None:
                 self.hitbox_overlay.update_hitboxes(
                     [
@@ -625,7 +632,8 @@ class PetWidget(QtWidgets.QWidget):
                     ] + rect_objects,
                     [
                         # (self.animacje_hitbox[self.obecna_animacja].currentImage(), int(self.real_x), int(self.real_y))
-                    ]
+                    ],
+                    polygons_objects
                 )
 
             if CustomHitboxCollisions.check_rect_hitbox_collision(pet_foot_rect, expanded_platform_rect):
