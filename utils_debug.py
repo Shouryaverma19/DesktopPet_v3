@@ -258,9 +258,11 @@ class DebugWindow(QtWidgets.QWidget):
         debug.update_debug(f"{Color.Red}ERROR: {Color.White}Something went wrong")
     """
 
+    _COLOR_PATTERN = re.compile(r'\x00(WHITE|BLACK|RED|GREEN|BLUE|YELLOW|CYAN|MAGENTA|GRAY|LIGHT_GRAY|RGB:\d+,\d+,\d+)\x00')
+
     def __init__(self, monitor_index: int = 1, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Pet Debug")
+        self.setWindowTitle("Debug window")
         self.setWindowFlags(QtCore.Qt.WindowType.WindowStaysOnTopHint | QtCore.Qt.WindowType.Tool)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, False)
 
@@ -275,17 +277,27 @@ class DebugWindow(QtWidgets.QWidget):
         btn_close.setMaximumHeight(25)
         self.layout.addWidget(btn_close)
 
-        # Text edit do wyświetlania tekstu
+        # QTextDocument zarządza treścią — QTextEdit tylko ją wyświetla.
+        # Dzięki setDocument() edity przez QTextCursor trafiają wprost do
+        # layoutu bez dodatkowego pośrednictwa HTML.
+        self._doc = QtGui.QTextDocument(self)
+        self._doc.setDefaultFont(QtGui.QFont("Consolas", 20))
+
         self.text_edit = QtWidgets.QTextEdit()
         self.text_edit.setReadOnly(True)
-        self.text_edit.setFont(QtGui.QFont("Consolas", 20))
+        self.text_edit.setDocument(self._doc)
         self.text_edit.setStyleSheet("border: 1px solid #ccc;")
         self.layout.addWidget(self.text_edit)
 
         self.setLayout(self.layout)
         self.setGeometry(0, 0, 1150, 800)
 
-        # Pozycjonowanie na żądanym monitorze
+        # Cache formatów kolorów — QTextCharFormat tworzony raz per kolor,
+        # potem tylko pobierany (unikamy alokacji na każde wywołanie update_debug)
+        self._fmt_cache: dict[str, QtGui.QTextCharFormat] = {}
+        self._default_fmt = QtGui.QTextCharFormat()
+
+        # Pozycjonowanie okna na żądanym monitorze
         screens = QtWidgets.QApplication.instance().screens()
         if monitor_index < len(screens):
             target = screens[monitor_index].availableGeometry()
@@ -294,64 +306,48 @@ class DebugWindow(QtWidgets.QWidget):
         self.move(target.x() + 20, target.y() + 20)
         self.show()
 
-    @staticmethod
-    def _parse_colored_text(text: str) -> str:
-        """
-        Parses text with color markers and converts to HTML
-
-        Tag formats:
-            \x00WHITE\x00
-            \x00RGB:255,0,0\x00
-        """
-        html = ""
-        pos = 0
-        current_color = None
-
-        # Znajdź wszystkie znaczniki kolorów
-        pattern = r'\x00(WHITE|BLACK|RED|GREEN|BLUE|YELLOW|CYAN|MAGENTA|GRAY|LIGHT_GRAY|RGB:\d+,\d+,\d+)\x00'
-
-        for match in re.finditer(pattern, text):
-            # Dodaj tekst przed znacznikiem
-            if pos < match.start():
-                chunk = text[pos:match.start()]
-                if current_color:
-                    html += f'<span style="color: {current_color};">{chunk}</span>'
-                else:
-                    html += chunk
-
-            # Parsuj kolor z znacznika
-            color_spec = match.group(1)
-            if color_spec.startswith('RGB:'):
-                r, g, b = map(int, color_spec[4:].split(','))
-                current_color = f"#{r:02x}{g:02x}{b:02x}"
-            else:
-                rgb = Color._NAMED_COLORS.get(color_spec, (255, 255, 255))
-                current_color = f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
-
-            pos = match.end()
-
-        # Dodaj pozostały tekst
-        if pos < len(text):
-            chunk = text[pos:]
-            if current_color:
-                html += f'<span style="color: {current_color};">{chunk}</span>'
-            else:
-                html += chunk
-
-        return html if html else text
+    def _get_fmt(self, color_spec: str) -> QtGui.QTextCharFormat:
+        """Returns a cached QTextCharFormat for the given color spec."""
+        if color_spec in self._fmt_cache:
+            return self._fmt_cache[color_spec]
+        fmt = QtGui.QTextCharFormat()
+        if color_spec.startswith('RGB:'):
+            r, g, b = map(int, color_spec[4:].split(','))
+        else:
+            r, g, b = Color._NAMED_COLORS.get(color_spec, (255, 255, 255))
+        fmt.setForeground(QtGui.QColor(r, g, b))
+        self._fmt_cache[color_spec] = fmt
+        return fmt
 
     def update_debug(self, text: str):
         """
-        Updates debug window content with color markers
+        Updates debug window content with color markers.
 
         Example:
             debug.update_debug(f"{Color.White}pos: {Color(255, 255, 0)}({x}, {y})")
             debug.update_debug(f"{Color.Red}Line 1\n{Color.Green}Line 2")
         """
-        html_text = self._parse_colored_text(text)
-        # Zamień znaki nowej linii na <br>
-        html_text = html_text.replace('\n', '<br>')
-        self.text_edit.setHtml(html_text)
+        # beginEditBlock() grupuje wszystkie zmiany w jeden undo-step i jeden
+        # pass layoutu — Qt nie rerenderuje po każdym insertText(), tylko raz
+        # po endEditBlock(). Całkowicie omijamy generowanie + parsowanie HTML.
+        cursor = QtGui.QTextCursor(self._doc)
+        cursor.beginEditBlock()
+        cursor.select(QtGui.QTextCursor.SelectionType.Document)
+        cursor.removeSelectedText()
+
+        pos = 0
+        fmt = self._default_fmt
+
+        for match in self._COLOR_PATTERN.finditer(text):
+            if pos < match.start():
+                cursor.insertText(text[pos:match.start()], fmt)
+            fmt = self._get_fmt(match.group(1))
+            pos = match.end()
+
+        if pos < len(text):
+            cursor.insertText(text[pos:], fmt)
+
+        cursor.endEditBlock()
 
     def closeEvent(self, event):
         event.ignore()

@@ -1,7 +1,7 @@
 from multiprocessing import Process, Pipe, Manager, Queue
 import sys
 import traceback
-from pet import run_app as run_app_pet
+from desktop.app import run_app as run_app_desktop
 from dashboard import run_app as run_app_dashboard
 import json
 from PyQt6.QtWidgets import QApplication, QMessageBox
@@ -81,7 +81,7 @@ def main() -> None:
         shared_data.args = args
         shared_data.settings = settings
 
-        p1 = Process(target=safe_run, args=(run_app_pet, "PET", conn1, shared_data, error_queue, log_queue), name="PET")
+        p1 = Process(target=safe_run, args=(run_app_desktop, "PET", conn1, shared_data, error_queue, log_queue), name="PET")
         p2 = Process(target=safe_run, args=(run_app_dashboard, "DASHBOARD", conn2, shared_data, error_queue, log_queue), name="DASHBOARD")
         processes = [p1, p2]
 
